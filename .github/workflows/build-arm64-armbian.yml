@@ -1,23 +1,17 @@
-name: build-ubuntu-latest
+name: build-armbian-arm64
 
-on: 
-  push:
-    branches: [main, master]
-  pull_request:
-    branches: [main, master]
-  workflow_dispatch:  # 添加这一行以启用手动触发
+on: [push, pull_request]
 
 env:
-  # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
+  # 编译类型（Release/Debug等）
   BUILD_TYPE: Release
 
 jobs:
   build:
-    # The CMake configure and build commands are platform agnostic and should work equally
-    # well on Windows or Mac. You can convert this to a matrix build if you need
-    # cross-platform coverage.
-    # See: https://docs.github.com/en/free-pro-team@latest/actions/learn-github-actions/managing-complex-workflows#using-a-build-matrix
+    # 使用支持ARM64的runner（官方Ubuntu ARM64或自托管Armbian runner）
     runs-on: ubuntu-latest
+    # 若有自托管的Armbian ARM64 runner，替换为：runs-on: [self-hosted, arm64, armbian]
+    
     strategy:
       matrix:
         compiler: [gcc, clang]
@@ -28,40 +22,60 @@ jobs:
           - compiler: clang
             cc: clang
             cxx: clang++
+
     steps:
-    - uses: actions/checkout@v2
+    - name: Checkout code
+      uses: actions/checkout@v4
       with:
-        submodules: 'recursive'
+        submodules: 'recursive' # 拉取子模块（项目依赖liblcb）
 
-    - name: Install libraries
+    - name: Set up ARM64 build environment (Armbian)
       run: |
-        sudo apt-get update
-        sudo apt-get install cmake libcunit1 libcunit1-doc libcunit1-dev
+        # 更新源并安装基础依赖
+        sudo apt-get update -y
+        # 安装编译依赖（与Ubuntu一致，Armbian兼容Debian/apt体系）
+        sudo apt-get install -y \
+          build-essential \
+          git \
+          cmake \
+          libcunit1 \
+          libcunit1-doc \
+          libcunit1-dev \
+          gcc-aarch64-linux-gnu \
+          g++-aarch64-linux-gnu
+        # 若为自托管Armbian runner，可跳过交叉编译工具链（直接用系统gcc/clang）
 
-    - name: Create Build Environment
-      # Some projects don't allow in-source building, so create a separate build directory
-      # We'll use this as our working directory for all subsequent commands
-      run: cmake -E make_directory ${{github.workspace}}/build
+    - name: Create Build Directory
+      run: cmake -E make_directory ${{ github.workspace }}/build
 
-    - name: Configure CMake
-      # Use a bash shell so we can use the same syntax for environment variable
-      # access regardless of the host operating system
+    - name: Configure CMake (ARM64)
       shell: bash
-      working-directory: ${{github.workspace}}/build
-      # Note the current convention is to use the -S and -B options here to specify source
-      # and build directories, but this is only available with CMake 3.13 and higher.
-      # The CMake binaries on the Github Actions machines are (as of this writing) 3.12
-      run: cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DENABLE_TESTS=1
+      working-directory: ${{ github.workspace }}/build
+      env:
+        CC: ${{ matrix.cc }}
+        CXX: ${{ matrix.cxx }}
+      run: |
+        # 针对ARM64架构配置CMake
+        cmake $GITHUB_WORKSPACE \
+          -DCMAKE_BUILD_TYPE=$BUILD_TYPE \
+          -DENABLE_TESTS=1 \
+          -DCMAKE_SYSTEM_PROCESSOR=arm64 \
+          # 若为交叉编译，添加以下两行（自托管runner可移除）
+          # -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+          # -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++
 
-    - name: Build
-      working-directory: ${{github.workspace}}/build
+    - name: Build msd_lite
+      working-directory: ${{ github.workspace }}/build
       shell: bash
-      # Execute the build.  You can specify a specific target with "--target <NAME>"
-      run: cmake --build . --config $BUILD_TYPE -j 16
+      run: cmake --build . --config $BUILD_TYPE -j $(nproc) # 自动适配CPU核心数
 
-    - name: Test
-      working-directory: ${{github.workspace}}/build
+    - name: Run Tests (可选)
+      working-directory: ${{ github.workspace }}/build
       shell: bash
-      # Execute tests defined by the CMake configuration.  
-      # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
-      run: ctest -C $BUILD_TYPE -j 16 --output-on-failure
+      run: ctest -C $BUILD_TYPE -j $(nproc) --output-on-failure
+
+    - name: Upload ARM64 binary (可选)
+      uses: actions/upload-artifact@v4
+      with:
+        name: msd_lite-arm64-${{ matrix.compiler }}
+        path: ${{ github.workspace }}/build/src/msd_lite
