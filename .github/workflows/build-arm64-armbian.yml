@@ -1,7 +1,12 @@
 # 文件路径: .github/workflows/build-arm64-armbian.yml
 name: build-arm64-armbian
 
-on: [push, pull_request]
+on: 
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:  # 添加这一行以启用手动触发
 
 env:
   # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
